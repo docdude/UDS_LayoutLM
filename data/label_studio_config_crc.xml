@@ -1,0 +1,88 @@
+<View>
+  <Header value="CRC Screening Document Annotation"/>
+  <Image name="image" value="$image" zoom="true" zoomControl="true" rotateControl="true"/>
+  
+  <View style="padding: 10px; margin-top: 10px; background: #f5f5f5; border-radius: 5px;">
+    <Header value="Instructions" size="5"/>
+    <Text name="instructions" value="Select a label, then click and drag to highlight text regions. Use B- prefix labels for the first word of an entity."/>
+  </View>
+  
+  <Labels name="label" toName="image">
+    
+    <!-- Patient Demographics (Blue shades) -->
+    <Label value="PATIENT_ID" background="#1f77b4" hotkey="1"/>
+    <Label value="PATIENT_NAME" background="#2ca02c"/>
+    <Label value="DATE_OF_BIRTH" background="#17becf"/>
+    <Label value="GENDER" background="#9edae5"/>
+    <Label value="DATE_OF_SERVICE" background="#98df8a" hotkey="2"/>
+    <Label value="PROVIDER_NAME" background="#aec7e8"/>
+    <Label value="PROVIDER_NPI" background="#c5b0d5"/>
+    <Label value="FACILITY_NAME" background="#c7c7c7"/>
+    
+    <!-- Clinical Codes (Red/Orange shades) -->
+    <Label value="DIAGNOSIS_ICD10" background="#d62728" hotkey="3"/>
+    <Label value="PROCEDURE_CPT" background="#ff7f0e" hotkey="4"/>
+    
+    <!-- Colonoscopy Specific (Purple shades) -->
+    <Label value="COLONOSCOPY_DATE" background="#9467bd" hotkey="5"/>
+    <Label value="COLONOSCOPY_RESULT" background="#8c564b" hotkey="6"/>
+    <Label value="COLONOSCOPY_INDICATION" background="#e377c2"/>
+    <Label value="BOWEL_PREP_QUALITY" background="#bcbd22"/>
+    <Label value="CECUM_REACHED" background="#dbdb8d"/>
+    <Label value="WITHDRAWAL_TIME" background="#f7b6d2"/>
+    
+    <!-- Polyp Findings (Pink/Magenta shades) -->
+    <Label value="POLYP_FINDING" background="#ff69b4" hotkey="7"/>
+    <Label value="POLYP_LOCATION" background="#da70d6"/>
+    <Label value="POLYP_SIZE" background="#ba55d3"/>
+    <Label value="POLYP_COUNT" background="#9932cc"/>
+    <Label value="BIOPSY_TAKEN" background="#8b008b"/>
+    <Label value="BIOPSY_RESULT" background="#ff1493"/>
+    <Label value="PATHOLOGY_DIAGNOSIS" background="#c71585" hotkey="8"/>
+    <Label value="COMPLICATIONS" background="#dc143c"/>
+    
+    <!-- FIT/FOBT Specific (Green shades) -->
+    <Label value="STOOL_TEST_TYPE" background="#228b22" hotkey="9"/>
+    <Label value="STOOL_TEST_DATE" background="#32cd32"/>
+    <Label value="STOOL_TEST_RESULT" background="#00ff00" hotkey="0"/>
+    <Label value="STOOL_TEST_VALUE" background="#7cfc00"/>
+    <Label value="REFERENCE_RANGE" background="#adff2f"/>
+    
+    <!-- Follow-up (Teal/Cyan shades) -->
+    <Label value="NEXT_SCREENING_DATE" background="#008080"/>
+    <Label value="SCREENING_INTERVAL" background="#20b2aa"/>
+    <Label value="RECOMMENDATION" background="#40e0d0"/>
+    <Label value="RISK_CATEGORY" background="#00ced1"/>
+    
+    <!-- General Lab (Gray shades) -->
+    <Label value="LAB_NAME" background="#696969"/>
+    <Label value="LAB_VALUE" background="#808080"/>
+    <Label value="LAB_DATE" background="#a9a9a9"/>
+    <Label value="LAB_UNIT" background="#d3d3d3"/>
+    
+  </Labels>
+  
+  <Rectangle name="bbox" toName="image" strokeWidth="2"/>
+  
+  <View style="margin-top: 20px;">
+    <Header value="Document Notes" size="5"/>
+    <TextArea name="notes" toName="image" 
+              placeholder="Add notes about document quality, unclear text, or special observations..."
+              rows="2" maxSubmissions="1"/>
+  </View>
+  
+  <View style="margin-top: 10px;">
+    <Header value="Document Type" size="5"/>
+    <Choices name="doc_type" toName="image" choice="single">
+      <Choice value="colonoscopy_report"/>
+      <Choice value="pathology_report"/>
+      <Choice value="fit_result"/>
+      <Choice value="fobt_result"/>
+      <Choice value="cologuard_result"/>
+      <Choice value="lab_report"/>
+      <Choice value="referral"/>
+      <Choice value="other"/>
+    </Choices>
+  </View>
+  
+</View>

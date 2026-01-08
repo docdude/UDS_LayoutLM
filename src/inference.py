@@ -1,0 +1,365 @@
+"""Inference module for UDS metrics extraction."""
+
+import os
+from pathlib import Path
+from typing import List, Dict, Optional, Union
+from dataclasses import dataclass, asdict
+import json
+
+import torch
+from transformers import LayoutLMv3ForTokenClassification, LayoutLMv3Processor
+from PIL import Image
+from tqdm import tqdm
+
+from .processor import PDFProcessor, ProcessedPage
+from .labels import ID2LABEL, UDS_MEASURES
+
+
+@dataclass
+class ExtractedEntity:
+    """An extracted entity from a document."""
+    entity_type: str
+    text: str
+    confidence: float
+    page: int
+    bbox: List[int]  # Normalized 0-1000
+    bbox_pixels: Optional[List[int]] = None  # Original pixel coordinates
+
+
+@dataclass 
+class ExtractionResult:
+    """Complete extraction result for a document."""
+    source_file: str
+    num_pages: int
+    entities: List[ExtractedEntity]
+    uds_metrics: Dict[str, List[ExtractedEntity]]
+    
+    def to_dict(self) -> Dict:
+        return {
+            "source_file": self.source_file,
+            "num_pages": self.num_pages,
+            "entities": [asdict(e) for e in self.entities],
+            "uds_metrics": {
+                k: [asdict(e) for e in v] 
+                for k, v in self.uds_metrics.items()
+            }
+        }
+    
+    def to_json(self, path: str):
+        with open(path, "w") as f:
+            json.dump(self.to_dict(), f, indent=2)
+
+
+class UDSExtractor:
+    """Extract UDS metrics from clinical documents."""
+    
+    def __init__(
+        self,
+        model_path: str,
+        device: Optional[str] = None,
+        confidence_threshold: float = 0.7
+    ):
+        """
+        Initialize the extractor.
+        
+        Args:
+            model_path: Path to fine-tuned model
+            device: Device to run inference on ("cuda" or "cpu")
+            confidence_threshold: Minimum confidence for entity extraction
+        """
+        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.confidence_threshold = confidence_threshold
+        
+        print(f"Loading model from {model_path}...")
+        self.processor = LayoutLMv3Processor.from_pretrained(
+            model_path,
+            apply_ocr=False
+        )
+        self.model = LayoutLMv3ForTokenClassification.from_pretrained(
+            model_path
+        ).to(self.device)
+        self.model.eval()
+        
+        self.pdf_processor = PDFProcessor()
+        print(f"Model loaded. Using device: {self.device}")
+    
+    def extract_from_pdf(self, pdf_path: str) -> ExtractionResult:
+        """Extract all UDS entities from a PDF document."""
+        pages = self.pdf_processor.process_pdf(pdf_path)
+        
+        all_entities = []
+        for page in pages:
+            entities = self._extract_from_page(page)
+            all_entities.extend(entities)
+        
+        # Group by UDS measures
+        uds_metrics = self._group_by_uds_measure(all_entities)
+        
+        return ExtractionResult(
+            source_file=pdf_path,
+            num_pages=len(pages),
+            entities=all_entities,
+            uds_metrics=uds_metrics
+        )
+    
+    def extract_from_image(
+        self, 
+        image: Union[str, Image.Image],
+        words: Optional[List[str]] = None,
+        boxes: Optional[List[List[int]]] = None
+    ) -> List[ExtractedEntity]:
+        """Extract entities from a single image."""
+        if isinstance(image, str):
+            page = self.pdf_processor.process_image(image)
+        else:
+            if words is None or boxes is None:
+                raise ValueError("Must provide words and boxes for PIL Image")
+            page = ProcessedPage(
+                image=image,
+                words=words,
+                boxes=boxes,
+                page_num=0,
+                source_file="",
+                raw_boxes=boxes
+            )
+        
+        return self._extract_from_page(page)
+    
+    def _extract_from_page(self, page: ProcessedPage) -> List[ExtractedEntity]:
+        """Extract entities from a single processed page."""
+        if not page.words:
+            return []
+        
+        # Prepare input
+        encoding = self.processor(
+            page.image,
+            page.words,
+            boxes=page.boxes,
+            return_tensors="pt",
+            truncation=True,
+            padding="max_length",
+            max_length=512,
+            return_offsets_mapping=False
+        )
+        encoding = {k: v.to(self.device) for k, v in encoding.items()}
+        
+        # Run inference
+        with torch.no_grad():
+            outputs = self.model(**encoding)
+        
+        # Get predictions and confidences
+        probs = torch.softmax(outputs.logits, dim=-1)
+        predictions = probs.argmax(-1).squeeze().tolist()
+        confidences = probs.max(-1).values.squeeze().tolist()
+        
+        # Handle single prediction case
+        if isinstance(predictions, int):
+            predictions = [predictions]
+            confidences = [confidences]
+        
+        # Get word_ids mapping
+        word_ids = encoding.word_ids(0) if hasattr(encoding, 'word_ids') else None
+        
+        # Extract entities using BIO tags
+        entities = []
+        current_entity_type = None
+        current_words = []
+        current_boxes = []
+        current_raw_boxes = []
+        current_confs = []
+        
+        for idx, (pred, conf) in enumerate(zip(predictions, confidences)):
+            # Get word index
+            if word_ids is not None:
+                word_idx = word_ids[idx]
+                if word_idx is None:
+                    continue
+            else:
+                word_idx = idx
+                if word_idx >= len(page.words):
+                    continue
+            
+            label = ID2LABEL.get(pred, "O")
+            
+            if label.startswith("B-"):
+                # Save previous entity if exists
+                if current_entity_type and current_words:
+                    entity = self._create_entity(
+                        current_entity_type,
+                        current_words,
+                        current_boxes,
+                        current_raw_boxes,
+                        current_confs,
+                        page.page_num
+                    )
+                    if entity.confidence >= self.confidence_threshold:
+                        entities.append(entity)
+                
+                # Start new entity
+                current_entity_type = label[2:]
+                current_words = [page.words[word_idx]]
+                current_boxes = [page.boxes[word_idx]]
+                current_raw_boxes = [page.raw_boxes[word_idx]] if page.raw_boxes else []
+                current_confs = [conf]
+                
+            elif label.startswith("I-"):
+                entity_type = label[2:]
+                if current_entity_type == entity_type:
+                    current_words.append(page.words[word_idx])
+                    current_boxes.append(page.boxes[word_idx])
+                    if page.raw_boxes:
+                        current_raw_boxes.append(page.raw_boxes[word_idx])
+                    current_confs.append(conf)
+            else:
+                # "O" label - save current entity if exists
+                if current_entity_type and current_words:
+                    entity = self._create_entity(
+                        current_entity_type,
+                        current_words,
+                        current_boxes,
+                        current_raw_boxes,
+                        current_confs,
+                        page.page_num
+                    )
+                    if entity.confidence >= self.confidence_threshold:
+                        entities.append(entity)
+                
+                current_entity_type = None
+                current_words = []
+                current_boxes = []
+                current_raw_boxes = []
+                current_confs = []
+        
+        # Don't forget last entity
+        if current_entity_type and current_words:
+            entity = self._create_entity(
+                current_entity_type,
+                current_words,
+                current_boxes,
+                current_raw_boxes,
+                current_confs,
+                page.page_num
+            )
+            if entity.confidence >= self.confidence_threshold:
+                entities.append(entity)
+        
+        return entities
+    
+    def _create_entity(
+        self,
+        entity_type: str,
+        words: List[str],
+        boxes: List[List[int]],
+        raw_boxes: List[List[int]],
+        confidences: List[float],
+        page_num: int
+    ) -> ExtractedEntity:
+        """Create an ExtractedEntity from collected tokens."""
+        # Merge bounding boxes
+        merged_box = [
+            min(b[0] for b in boxes),
+            min(b[1] for b in boxes),
+            max(b[2] for b in boxes),
+            max(b[3] for b in boxes)
+        ]
+        
+        merged_raw_box = None
+        if raw_boxes:
+            merged_raw_box = [
+                min(b[0] for b in raw_boxes),
+                min(b[1] for b in raw_boxes),
+                max(b[2] for b in raw_boxes),
+                max(b[3] for b in raw_boxes)
+            ]
+        
+        return ExtractedEntity(
+            entity_type=entity_type,
+            text=" ".join(words),
+            confidence=sum(confidences) / len(confidences),
+            page=page_num,
+            bbox=merged_box,
+            bbox_pixels=merged_raw_box
+        )
+    
+    def _group_by_uds_measure(
+        self, 
+        entities: List[ExtractedEntity]
+    ) -> Dict[str, List[ExtractedEntity]]:
+        """Group extracted entities by UDS measure type."""
+        grouped = {}
+        
+        for measure_name, entity_types in UDS_MEASURES.items():
+            matching = [
+                e for e in entities 
+                if e.entity_type in entity_types
+            ]
+            if matching:
+                grouped[measure_name] = matching
+        
+        return grouped
+    
+    def batch_extract(
+        self,
+        input_dir: str,
+        output_dir: str,
+        extensions: List[str] = [".pdf"]
+    ) -> List[ExtractionResult]:
+        """Process all documents in a directory."""
+        input_dir = Path(input_dir)
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        files = []
+        for ext in extensions:
+            files.extend(input_dir.glob(f"*{ext}"))
+        
+        results = []
+        for file_path in tqdm(files, desc="Processing documents"):
+            try:
+                result = self.extract_from_pdf(str(file_path))
+                
+                # Save individual result
+                output_file = output_dir / f"{file_path.stem}_extracted.json"
+                result.to_json(str(output_file))
+                
+                results.append(result)
+            except Exception as e:
+                print(f"Error processing {file_path}: {e}")
+        
+        # Save summary
+        summary = {
+            "total_documents": len(results),
+            "total_entities": sum(len(r.entities) for r in results),
+            "documents": [r.source_file for r in results]
+        }
+        with open(output_dir / "extraction_summary.json", "w") as f:
+            json.dump(summary, f, indent=2)
+        
+        return results
+
+
+if __name__ == "__main__":
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Extract UDS metrics from documents")
+    parser.add_argument("input", help="Input PDF file or directory")
+    parser.add_argument("--model", required=True, help="Path to trained model")
+    parser.add_argument("--output", default="./extractions", help="Output directory")
+    parser.add_argument("--threshold", type=float, default=0.7, help="Confidence threshold")
+    
+    args = parser.parse_args()
+    
+    extractor = UDSExtractor(
+        model_path=args.model,
+        confidence_threshold=args.threshold
+    )
+    
+    input_path = Path(args.input)
+    if input_path.is_file():
+        result = extractor.extract_from_pdf(str(input_path))
+        print(f"\nExtracted {len(result.entities)} entities:")
+        for entity in result.entities:
+            print(f"  {entity.entity_type}: {entity.text} ({entity.confidence:.2f})")
+    else:
+        results = extractor.batch_extract(str(input_path), args.output)
+        print(f"\nProcessed {len(results)} documents")

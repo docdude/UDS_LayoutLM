@@ -1,0 +1,31 @@
+# UDS Metrics Extraction Configuration
+
+model:
+  base_model: "microsoft/layoutlmv3-base"
+  max_length: 512
+
+processing:
+  dpi: 300
+  ocr_confidence_threshold: 30
+
+training:
+  output_dir: "./outputs"
+  epochs: 10
+  batch_size: 4
+  learning_rate: 5e-5
+  weight_decay: 0.01
+  warmup_ratio: 0.1
+  fp16: true
+  eval_strategy: "epoch"
+  save_strategy: "epoch"
+  logging_steps: 50
+
+data:
+  raw_pdfs: "./data/raw_pdfs"
+  processed: "./data/processed"
+  labeled: "./data/labeled"
+  dataset: "./data/dataset"
+
+inference:
+  confidence_threshold: 0.7
+  device: "cuda"  # or "cpu"
