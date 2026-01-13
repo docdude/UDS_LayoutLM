@@ -12,11 +12,40 @@ from tqdm import tqdm
 from .labels import LABEL2ID, ID2LABEL, UDS_LABELS
 
 
+def bbox_overlap(box1_pct, box2_px, img_width, img_height):
+    """
+    Check if two bounding boxes overlap.
+    box1_pct: Label Studio format (x, y, width, height as percentages)
+    box2_px: OCR format (x1, y1, x2, y2 as pixels)
+    """
+    # Convert Label Studio percentage bbox to pixels
+    x1_ls = (box1_pct["x"] / 100) * img_width
+    y1_ls = (box1_pct["y"] / 100) * img_height
+    x2_ls = x1_ls + (box1_pct["width"] / 100) * img_width
+    y2_ls = y1_ls + (box1_pct["height"] / 100) * img_height
+    
+    # OCR bbox is [x1, y1, x2, y2]
+    x1_ocr, y1_ocr, x2_ocr, y2_ocr = box2_px
+    
+    # Check for overlap
+    x_overlap = max(0, min(x2_ls, x2_ocr) - max(x1_ls, x1_ocr))
+    y_overlap = max(0, min(y2_ls, y2_ocr) - max(y1_ls, y1_ocr))
+    
+    if x_overlap > 0 and y_overlap > 0:
+        # Calculate overlap ratio relative to OCR token
+        ocr_area = (x2_ocr - x1_ocr) * (y2_ocr - y1_ocr)
+        if ocr_area > 0:
+            overlap_area = x_overlap * y_overlap
+            return overlap_area / ocr_area > 0.3  # 30% overlap threshold
+    
+    return False
+
+
 def load_label_studio_export(export_path: str) -> List[Dict]:
     """
     Load and parse Label Studio JSON export.
     
-    Expected format from Label Studio NER labeling.
+    Expected format from Label Studio NER labeling with bounding boxes.
     """
     with open(export_path, "r") as f:
         data = json.load(f)
@@ -27,6 +56,10 @@ def load_label_studio_export(export_path: str) -> List[Dict]:
         # Get image and OCR data
         image_path = item["data"].get("image", "")
         ocr_data = item["data"].get("ocr", [])
+        
+        # Handle Label Studio local file paths
+        if image_path.startswith("/data/local-files/?d="):
+            image_path = image_path.replace("/data/local-files/?d=", "")
         
         if not ocr_data:
             continue
@@ -39,26 +72,44 @@ def load_label_studio_export(export_path: str) -> List[Dict]:
         
         # Get annotations
         annotations = item.get("annotations", [])
-        if annotations:
-            results = annotations[0].get("result", [])
+        if not annotations:
+            continue
             
-            for result in results:
-                if result.get("type") == "labels":
-                    value = result.get("value", {})
-                    label_names = value.get("labels", [])
-                    
-                    if not label_names:
-                        continue
-                    
-                    label = label_names[0]
-                    start = value.get("start")
-                    end = value.get("end")
-                    
-                    if start is not None and end is not None:
-                        # BIO tagging
-                        labels[start] = f"B-{label}"
-                        for i in range(start + 1, min(end, len(labels))):
-                            labels[i] = f"I-{label}"
+        results = annotations[0].get("result", [])
+        
+        # Get image dimensions from the results
+        img_width = 2550  # Default
+        img_height = 3300  # Default
+        for result in results:
+            if "original_width" in result:
+                img_width = result["original_width"]
+                img_height = result["original_height"]
+                break
+        
+        # Process each labeled region
+        for result in results:
+            if result.get("type") == "labels":
+                value = result.get("value", {})
+                label_names = value.get("labels", [])
+                
+                if not label_names:
+                    continue
+                
+                label = label_names[0]
+                
+                # Find overlapping OCR tokens
+                matching_indices = []
+                for idx, ocr_token in enumerate(ocr_data):
+                    if bbox_overlap(value, ocr_token["bbox"], img_width, img_height):
+                        matching_indices.append(idx)
+                
+                # Apply BIO tagging
+                if matching_indices:
+                    matching_indices.sort()
+                    labels[matching_indices[0]] = f"B-{label}"
+                    for idx in matching_indices[1:]:
+                        if labels[idx] == "O":  # Don't override existing labels
+                            labels[idx] = f"I-{label}"
         
         # Convert labels to IDs (use 0 for unknown labels)
         label_ids = [LABEL2ID.get(l, 0) for l in labels]

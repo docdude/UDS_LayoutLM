@@ -3,9 +3,11 @@
 import os
 from pathlib import Path
 from typing import Dict, Optional
+from collections import Counter
 import yaml
 
 import torch
+import torch.nn as nn
 import numpy as np
 from transformers import (
     LayoutLMv3ForTokenClassification,
@@ -24,6 +26,53 @@ from seqeval.metrics import (
 
 from .labels import LABEL2ID, ID2LABEL, NUM_LABELS
 from .dataset import UDSDataCollator
+
+
+class WeightedTrainer(Trainer):
+    """Custom Trainer with class-weighted loss for imbalanced NER."""
+    
+    def __init__(self, class_weights=None, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.class_weights = class_weights
+        
+    def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
+        labels = inputs.pop("labels")
+        outputs = model(**inputs)
+        logits = outputs.logits
+        
+        if self.class_weights is not None:
+            weight = self.class_weights.to(logits.device)
+            loss_fct = nn.CrossEntropyLoss(weight=weight, ignore_index=-100)
+        else:
+            loss_fct = nn.CrossEntropyLoss(ignore_index=-100)
+        
+        loss = loss_fct(logits.view(-1, self.model.config.num_labels), labels.view(-1))
+        
+        return (loss, outputs) if return_outputs else loss
+
+
+def compute_class_weights(dataset, num_labels: int):
+    """Compute inverse frequency weights for each class."""
+    all_labels = []
+    for ex in dataset:
+        all_labels.extend(ex['labels'])
+    
+    label_counts = Counter(all_labels)
+    total = sum(label_counts.values())
+    
+    # Compute weights: higher weight for rare classes
+    weights = torch.ones(num_labels)
+    for label_id, count in label_counts.items():
+        if label_id >= 0:  # Skip -100 (padding)
+            # Inverse frequency, capped to avoid extreme weights
+            weights[label_id] = min(total / (count * num_labels), 50.0)
+    
+    # Give extra weight to non-O classes (multiply by 10)
+    for i in range(1, num_labels):
+        weights[i] *= 10.0
+    
+    print(f"Class weights: O={weights[0]:.2f}, avg non-O={weights[1:].mean():.2f}")
+    return weights
 
 
 def load_config(config_path: str = "config.yaml") -> Dict:
@@ -125,23 +174,25 @@ def train(
         eval_strategy=train_config["eval_strategy"],
         save_strategy=train_config["save_strategy"],
         logging_steps=train_config["logging_steps"],
-        load_best_model_at_end=True,
-        metric_for_best_model="f1",
-        greater_is_better=True,
         save_total_limit=3,
         report_to="none",  # Disable wandb/tensorboard by default
         dataloader_num_workers=0,  # Windows compatibility
+        remove_unused_columns=False,  # Keep all columns for custom collator
     )
     
-    # Trainer
-    trainer = Trainer(
+    # Compute class weights to handle imbalance
+    print("\nComputing class weights for imbalanced data...")
+    class_weights = compute_class_weights(dataset["train"], NUM_LABELS)
+    
+    # Trainer with weighted loss
+    trainer = WeightedTrainer(
+        class_weights=class_weights,
         model=model,
         args=training_args,
         train_dataset=dataset["train"],
         eval_dataset=dataset["validation"],
         data_collator=data_collator,
         compute_metrics=compute_metrics,
-        callbacks=[EarlyStoppingCallback(early_stopping_patience=3)]
     )
     
     # Train

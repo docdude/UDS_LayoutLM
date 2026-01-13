@@ -1,0 +1,19 @@
+# Quick test configuration - 1 epoch only
+model:
+  base_model: "microsoft/layoutlmv3-base"
+  max_length: 512
+
+training:
+  output_dir: "./outputs/test"
+  epochs: 1
+  batch_size: 2
+  learning_rate: 0.00005
+  weight_decay: 0.01
+  warmup_ratio: 0.1
+  fp16: false
+  eval_strategy: "epoch"
+  save_strategy: "epoch"
+  logging_steps: 5
+
+data:
+  dataset: "./data/dataset"
