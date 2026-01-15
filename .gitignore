@@ -58,9 +58,11 @@ data/dataset/**/
 
 # Model outputs
 outputs/
+models/
 *.pth
 *.bin
 *.pt
+*.safetensors
 
 # Label Studio
 label-studio-data/

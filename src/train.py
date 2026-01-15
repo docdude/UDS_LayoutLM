@@ -1,6 +1,7 @@
 """Training script for UDS LayoutLMv3 model."""
 
 import os
+import importlib
 from pathlib import Path
 from typing import Dict, Optional
 from collections import Counter
@@ -24,7 +25,6 @@ from seqeval.metrics import (
     recall_score
 )
 
-from .labels import LABEL2ID, ID2LABEL, NUM_LABELS
 from .dataset import UDSDataCollator
 
 
@@ -81,31 +81,34 @@ def load_config(config_path: str = "config.yaml") -> Dict:
         return yaml.safe_load(f)
 
 
-def compute_metrics(eval_pred):
-    """Compute seqeval metrics for token classification."""
-    predictions, labels = eval_pred
-    predictions = np.argmax(predictions, axis=2)
-    
-    true_labels = []
-    true_predictions = []
-    
-    for prediction, label in zip(predictions, labels):
-        true_label = []
-        true_pred = []
+def make_compute_metrics(id2label):
+    """Create compute_metrics function with the given id2label mapping."""
+    def compute_metrics(eval_pred):
+        """Compute seqeval metrics for token classification."""
+        predictions, labels = eval_pred
+        predictions = np.argmax(predictions, axis=2)
         
-        for p, l in zip(prediction, label):
-            if l != -100:  # Ignore padding and special tokens
-                true_label.append(ID2LABEL[l])
-                true_pred.append(ID2LABEL[p])
+        true_labels = []
+        true_predictions = []
         
-        true_labels.append(true_label)
-        true_predictions.append(true_pred)
-    
-    return {
-        "precision": precision_score(true_labels, true_predictions),
-        "recall": recall_score(true_labels, true_predictions),
-        "f1": f1_score(true_labels, true_predictions),
-    }
+        for prediction, label in zip(predictions, labels):
+            true_label = []
+            true_pred = []
+            
+            for p, l in zip(prediction, label):
+                if l != -100:  # Ignore padding and special tokens
+                    true_label.append(id2label[l])
+                    true_pred.append(id2label[p])
+            
+            true_labels.append(true_label)
+            true_predictions.append(true_pred)
+        
+        return {
+            "precision": precision_score(true_labels, true_predictions),
+            "recall": recall_score(true_labels, true_predictions),
+            "f1": f1_score(true_labels, true_predictions),
+        }
+    return compute_metrics
 
 
 def train(
@@ -120,9 +123,18 @@ def train(
     train_config = config["training"]
     data_config = config["data"]
     
+    # Load labels - support configurable label modules
+    labels_module_name = config.get("labels", {}).get("module", "src.labels")
+    print(f"Loading labels from: {labels_module_name}")
+    labels_module = importlib.import_module(labels_module_name)
+    LABEL2ID = labels_module.LABEL2ID
+    ID2LABEL = labels_module.ID2LABEL
+    NUM_LABELS = labels_module.NUM_LABELS
+    
     print("=" * 50)
     print("UDS Metrics Extraction - Training")
     print("=" * 50)
+    print(f"Using {NUM_LABELS} labels from {labels_module_name}")
     
     # Set up device
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -167,9 +179,9 @@ def train(
         num_train_epochs=train_config["epochs"],
         per_device_train_batch_size=train_config["batch_size"],
         per_device_eval_batch_size=train_config["batch_size"],
-        learning_rate=train_config["learning_rate"],
-        weight_decay=train_config["weight_decay"],
-        warmup_ratio=train_config["warmup_ratio"],
+        learning_rate=float(train_config["learning_rate"]),
+        weight_decay=float(train_config["weight_decay"]),
+        warmup_ratio=float(train_config["warmup_ratio"]),
         fp16=train_config["fp16"] and torch.cuda.is_available(),
         eval_strategy=train_config["eval_strategy"],
         save_strategy=train_config["save_strategy"],
@@ -183,6 +195,9 @@ def train(
     # Compute class weights to handle imbalance
     print("\nComputing class weights for imbalanced data...")
     class_weights = compute_class_weights(dataset["train"], NUM_LABELS)
+    
+    # Create compute_metrics with our labels
+    compute_metrics = make_compute_metrics(ID2LABEL)
     
     # Trainer with weighted loss
     trainer = WeightedTrainer(

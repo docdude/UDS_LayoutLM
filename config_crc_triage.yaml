@@ -1,0 +1,24 @@
+# CRC Triage Model Configuration
+# Focused on: Document type (colonoscopy/FIT/FOBT), dates, and results
+
+model:
+  base_model: "microsoft/layoutlmv3-base"
+  max_length: 512
+
+training:
+  output_dir: "./models/crc_triage"
+  epochs: 15
+  batch_size: 2
+  learning_rate: 0.00005
+  weight_decay: 0.01
+  warmup_ratio: 0.1
+  fp16: false
+  eval_strategy: "epoch"
+  save_strategy: "epoch"
+  logging_steps: 10
+
+data:
+  dataset: "./data/dataset_crc_triage"
+
+labels:
+  module: "src.labels_crc_triage"
