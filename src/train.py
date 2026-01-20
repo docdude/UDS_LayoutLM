@@ -224,6 +224,14 @@ def train(
     effective_batch_size = train_config["batch_size"] * gradient_accumulation_steps
     print(f"Gradient accumulation: {gradient_accumulation_steps} steps (effective batch size: {effective_batch_size})")
     
+    # FP16 mixed precision
+    use_fp16 = train_config.get("fp16", False) and torch.cuda.is_available()
+    print(f"FP16 mixed precision: {'enabled' if use_fp16 else 'disabled'}")
+    
+    # LR scheduler
+    lr_scheduler = train_config.get("lr_scheduler_type", "linear")
+    print(f"LR scheduler: {lr_scheduler}")
+    
     # Training arguments
     training_args = TrainingArguments(
         output_dir=str(output_dir),
@@ -234,8 +242,8 @@ def train(
         learning_rate=float(train_config["learning_rate"]),
         weight_decay=float(train_config["weight_decay"]),
         warmup_ratio=float(train_config["warmup_ratio"]),
-        lr_scheduler_type=train_config.get("lr_scheduler_type", "linear"),
-        fp16=train_config.get("fp16", False) and torch.cuda.is_available(),
+        lr_scheduler_type=lr_scheduler,
+        fp16=use_fp16,
         eval_strategy=train_config["eval_strategy"],
         save_strategy=train_config["save_strategy"],
         logging_steps=train_config["logging_steps"],
