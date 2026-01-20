@@ -280,24 +280,43 @@ def train(
     
     trainer.train(resume_from_checkpoint=resume_from_checkpoint)
     
-    # Save final model
+    # Get best model info (if load_best_model_at_end is True)
+    best_metric = None
+    best_epoch = None
+    if load_best_model and hasattr(trainer.state, 'best_metric'):
+        best_metric = trainer.state.best_metric
+        # Find which epoch had the best metric from log history
+        for log in reversed(trainer.state.log_history):
+            if 'eval_f1' in log and abs(log['eval_f1'] - best_metric) < 1e-6:
+                best_epoch = log.get('epoch')
+                break
+        print(f"\nBest model loaded from epoch {best_epoch} with F1={best_metric:.4f}")
+    
+    # Save final model (this is the best model if load_best_model_at_end=True)
     final_model_path = output_dir / "final_model"
     print(f"\nSaving final model to {final_model_path}...")
     trainer.save_model(str(final_model_path))
     processor.save_pretrained(str(final_model_path))
     
-    # Evaluate on test set
+    # Evaluate on test set (using the best model)
     print("\nEvaluating on test set...")
     test_results = trainer.evaluate(dataset["test"])
     print(f"Test Results: {test_results}")
     
-    # Save results
+    # Save results with best model info
     results_file = output_dir / "training_results.yaml"
+    results_data = {
+        "test_results": test_results,
+        "config": config
+    }
+    if best_metric is not None:
+        results_data["best_model"] = {
+            "metric": "f1",
+            "value": float(best_metric),
+            "epoch": float(best_epoch) if best_epoch else None
+        }
     with open(results_file, "w") as f:
-        yaml.dump({
-            "test_results": test_results,
-            "config": config
-        }, f)
+        yaml.dump(results_data, f)
     
     print("\n" + "=" * 50)
     print("Training complete!")
