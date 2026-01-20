@@ -19,7 +19,7 @@ training:
   eval_strategy: "epoch"
   save_strategy: "epoch"
   logging_steps: 10
-  device: "auto"  # Auto-detect GPU/CPU
+  device: "cuda"  # Use "cuda" for GPU, "cpu" for CPU, or "auto" to detect
   report_to: "tensorboard"  # Enable TensorBoard logging
   early_stopping_patience: 5  # Stop if no improvement for 5 epochs
   load_best_model_at_end: true  # Load best checkpoint at end

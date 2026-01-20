@@ -168,7 +168,11 @@ def train(
     print(f"Using {NUM_LABELS} labels from {labels_module_name}")
     
     # Set up device - respect config override if specified
-    device = train_config.get("device", "cuda" if torch.cuda.is_available() else "cpu")
+    device_config = train_config.get("device", "auto")
+    if device_config == "auto":
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+    else:
+        device = device_config
     print(f"Using device: {device}")
     
     # Load processor
