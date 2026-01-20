@@ -40,6 +40,7 @@
     <Label value="BIOPSY_RESULT" background="#ff1493"/>
     <Label value="PATHOLOGY_DIAGNOSIS" background="#c71585" hotkey="8"/>
     <Label value="COMPLICATIONS" background="#dc143c"/>
+    <Label value="COLON_ANATOMY" background="#dda0dd" hotkey="a"/>
     
     <!-- FIT/FOBT Specific (Green shades) -->
     <Label value="STOOL_TEST_TYPE" background="#228b22" hotkey="9"/>

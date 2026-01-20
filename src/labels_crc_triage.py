@@ -38,6 +38,9 @@ CRC_TRIAGE_LABELS = [
     "B-INDICATION_DIAGNOSTIC", "I-INDICATION_DIAGNOSTIC",
     "B-DIVERTICULA_FINDING", "I-DIVERTICULA_FINDING",
     "B-HEMORRHOIDS_FINDING", "I-HEMORRHOIDS_FINDING",
+    
+    # === Colon Anatomy (Procedure Completeness & Image Labels) ===
+    "B-COLON_ANATOMY", "I-COLON_ANATOMY",  # cecum, ascending, transverse, sigmoid, etc.
 ]
 
 LABEL2ID = {label: idx for idx, label in enumerate(CRC_TRIAGE_LABELS)}
