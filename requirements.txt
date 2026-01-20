@@ -18,5 +18,9 @@ pyyaml>=6.0
 tqdm>=4.66.0
 pandas>=2.0.0
 
+# Audit Dashboard
+streamlit>=1.28.0
+requests>=2.31.0
+
 # Labeling (optional - install separately)
 # label-studio>=1.10.0

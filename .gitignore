@@ -48,6 +48,7 @@ data/processed/**/*.png
 data/processed/**/*.json
 data/labeled/**/*.json
 data/dataset/**/
+data/dataset_crc_triage/**/*.arrow
 
 # Keep directory structure but not files
 !data/.gitkeep

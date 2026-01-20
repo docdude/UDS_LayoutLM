@@ -7,9 +7,9 @@ from typing import List, Dict, Tuple, Set
 from dataclasses import dataclass, field
 from collections import Counter
 import sys
+import importlib
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
-from src.labels import UDS_LABELS, LABEL2ID, UDS_MEASURES
 
 
 @dataclass
@@ -46,10 +46,43 @@ class ValidationReport:
         return len(self.errors) == 0
 
 
+# Global variables for labels - set by load_labels_module()
+LABELS_LIST = []
+LABEL2ID = {}
+UDS_MEASURES = {}
+CRITICAL_LABELS = []
+
+
+def load_labels_module(module_name: str):
+    """Load labels from specified module."""
+    global LABELS_LIST, LABEL2ID, UDS_MEASURES, CRITICAL_LABELS
+    
+    labels_module = importlib.import_module(module_name)
+    
+    if module_name == "src.labels_crc_triage":
+        LABELS_LIST = labels_module.CRC_TRIAGE_LABELS
+        LABEL2ID = labels_module.LABEL2ID
+        # CRC-specific measures
+        UDS_MEASURES = {
+            "colonoscopy": ["DOC_TYPE_COLONOSCOPY", "PROCEDURE_DATE"],
+            "fit_test": ["DOC_TYPE_FIT", "COLLECTION_DATE", "RESULT_NEGATIVE", "RESULT_POSITIVE"],
+            "fobt_test": ["DOC_TYPE_FOBT", "COLLECTION_DATE", "RESULT_NEGATIVE", "RESULT_POSITIVE"],
+            "sigmoidoscopy": ["DOC_TYPE_SIGMOIDOSCOPY", "PROCEDURE_DATE"],
+            "ct_colonography": ["DOC_TYPE_CT_COLONOGRAPHY", "PROCEDURE_DATE"],
+            "polyp_findings": ["POLYP_FINDING", "POLYP_LOCATION", "POLYP_SIZE", "PATHOLOGY_DIAGNOSIS"],
+        }
+        CRITICAL_LABELS = ["DOC_TYPE_COLONOSCOPY", "DOC_TYPE_FIT", "PROCEDURE_DATE"]
+    else:
+        LABELS_LIST = labels_module.UDS_LABELS
+        LABEL2ID = labels_module.LABEL2ID
+        UDS_MEASURES = getattr(labels_module, 'UDS_MEASURES', {})
+        CRITICAL_LABELS = ["PATIENT_ID", "DATE_OF_SERVICE"]
+
+
 def get_valid_labels() -> Set[str]:
     """Get set of valid label names (without B-/I- prefix)."""
     valid = set()
-    for label in UDS_LABELS:
+    for label in LABELS_LIST:
         if label.startswith("B-") or label.startswith("I-"):
             valid.add(label[2:])
     return valid
@@ -86,9 +119,12 @@ def validate_annotation_result(
     # Check result type
     result_type = result.get("type", "")
     
-    if result_type == "labels":
-        # Check label value
-        labels = result.get("value", {}).get("labels", [])
+    # Handle both "labels" and "rectanglelabels" types
+    if result_type in ["labels", "rectanglelabels"]:
+        # Check label value - handle both formats
+        value = result.get("value", {})
+        labels = value.get("labels", []) or value.get("rectanglelabels", [])
+        
         for label in labels:
             is_valid, message = validate_label_name(label, valid_labels)
             if not is_valid:
@@ -102,7 +138,6 @@ def validate_annotation_result(
                 ))
         
         # Check bounding box
-        value = result.get("value", {})
         required_bbox_fields = ["x", "y", "width", "height"]
         for field in required_bbox_fields:
             if field not in value:
@@ -197,9 +232,12 @@ def validate_task(
                 )
                 issues.extend(result_issues)
                 
-                # Count labels
-                if result.get("type") == "labels":
-                    for label in result.get("value", {}).get("labels", []):
+                # Count labels - handle both "labels" and "rectanglelabels"
+                result_type = result.get("type", "")
+                if result_type in ["labels", "rectanglelabels"]:
+                    value = result.get("value", {})
+                    labels = value.get("labels", []) or value.get("rectanglelabels", [])
+                    for label in labels:
                         label_counts[label] += 1
     
     return issues, dict(label_counts)
@@ -300,8 +338,7 @@ def check_label_distribution(label_counts: Dict[str, int]) -> List[ValidationIss
             ))
     
     # Check for missing critical labels
-    critical_labels = ["PATIENT_ID", "DATE_OF_SERVICE"]
-    for label in critical_labels:
+    for label in CRITICAL_LABELS:
         if label not in label_counts:
             issues.append(ValidationIssue(
                 severity="warning",
@@ -499,6 +536,12 @@ def main():
         help="Directory containing Label Studio JSON exports"
     )
     parser.add_argument(
+        "--labels",
+        default="src.labels_crc_triage",
+        choices=["src.labels", "src.labels_crc_triage"],
+        help="Labels module to use for validation (default: src.labels_crc_triage)"
+    )
+    parser.add_argument(
         "--output",
         default=None,
         help="Save report to JSON file"
@@ -515,6 +558,11 @@ def main():
     )
     
     args = parser.parse_args()
+    
+    # Load labels module
+    print(f"Using labels from: {args.labels}")
+    load_labels_module(args.labels)
+    print(f"Loaded {len(LABELS_LIST)} labels")
     
     # Run validation
     report = validate_annotations(args.labeled, verbose=not args.quiet)

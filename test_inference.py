@@ -1,14 +1,20 @@
 """Quick inference test on a sample document."""
+import argparse
 import torch
 from pathlib import Path
 from PIL import Image
 from transformers import LayoutLMv3ForTokenClassification, LayoutLMv3Processor
-from src.labels import ID2LABEL
+import importlib
 from src.processor import PDFProcessor
 import json
 
-def run_inference(image_path: str, model_path: str = "outputs/final_model"):
+
+def run_inference(image_path: str, model_path: str = "models/crc_triage/final_model", labels_module: str = "src.labels_crc_triage"):
     """Run inference on a single image."""
+    
+    # Load labels
+    labels = importlib.import_module(labels_module)
+    ID2LABEL = labels.ID2LABEL
     
     # Load model and processor
     print(f"Loading model from {model_path}...")
@@ -96,26 +102,30 @@ def run_inference(image_path: str, model_path: str = "outputs/final_model"):
 
 
 if __name__ == "__main__":
-    import sys
+    parser = argparse.ArgumentParser(description="Test inference on a document image")
+    parser.add_argument("--image", type=str, help="Path to image file")
+    parser.add_argument("--model", type=str, default="models/crc_triage/final_model", help="Path to model")
+    parser.add_argument("--labels", type=str, default="src.labels_crc_triage", help="Labels module")
+    args = parser.parse_args()
     
     # Find a test image
     processed_dir = Path("data/processed")
     images = list(processed_dir.glob("*.png"))
     
-    if not images:
-        print("No images found in data/processed/")
+    if args.image:
+        test_image = args.image
+    elif images:
+        test_image = str(images[0])
+    else:
+        print("No images found in data/processed/ - specify with --image")
+        import sys
         sys.exit(1)
     
-    # Use first image or specified
-    test_image = str(images[0])
-    if len(sys.argv) > 1:
-        test_image = sys.argv[1]
-    
     print(f"\n{'='*50}")
-    print("UDS Metrics Extraction - Inference Test")
+    print("CRC Triage Model - Inference Test")
     print(f"{'='*50}\n")
     
-    entities = run_inference(test_image)
+    entities = run_inference(test_image, model_path=args.model, labels_module=args.labels)
     
     print(f"\n{'='*50}")
     print(f"Extracted {len(entities)} entities from {Path(test_image).name}:")
@@ -123,7 +133,8 @@ if __name__ == "__main__":
     
     if entities:
         for e in entities:
-            print(f"  [{e['label']}] {e['text'][:50]}... (conf: {e['confidence']:.2f})")
+            text_preview = e['text'][:60] + "..." if len(e['text']) > 60 else e['text']
+            print(f"  [{e['label']:30}] {text_preview} (conf: {e['confidence']:.2f})")
     else:
         print("  No entities extracted")
     

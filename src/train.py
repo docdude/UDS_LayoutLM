@@ -51,27 +51,58 @@ class WeightedTrainer(Trainer):
         return (loss, outputs) if return_outputs else loss
 
 
-def compute_class_weights(dataset, num_labels: int):
-    """Compute inverse frequency weights for each class."""
+def compute_class_weights(dataset, num_labels: int, entity_boost: float = 5.0, o_weight: float = 1.0):
+    """
+    Compute balanced class weights for NER.
+    
+    Args:
+        dataset: Training dataset
+        num_labels: Number of label classes
+        entity_boost: Multiplier for entity classes vs O (default 5.0)
+        o_weight: Base weight for O class (default 1.0)
+    
+    Strategy:
+        - Use sqrt of inverse frequency (less extreme than raw inverse)
+        - Separate boost for B- vs I- tags (B- slightly higher)
+        - Configurable entity boost to tune precision/recall tradeoff
+    """
     all_labels = []
     for ex in dataset:
         all_labels.extend(ex['labels'])
     
     label_counts = Counter(all_labels)
-    total = sum(label_counts.values())
+    total = sum(v for k, v in label_counts.items() if k >= 0)
     
-    # Compute weights: higher weight for rare classes
+    # Count how many are O vs entities
+    o_count = label_counts.get(0, 1)
+    entity_count = total - o_count
+    
+    print(f"  Label distribution: O={o_count} ({o_count/total:.1%}), entities={entity_count} ({entity_count/total:.1%})")
+    
+    # Compute weights
     weights = torch.ones(num_labels)
+    
+    # O class gets base weight (can reduce to push model toward entities)
+    weights[0] = o_weight
+    
+    # Entity classes get sqrt inverse frequency + boost
     for label_id, count in label_counts.items():
-        if label_id >= 0:  # Skip -100 (padding)
-            # Inverse frequency, capped to avoid extreme weights
-            weights[label_id] = min(total / (count * num_labels), 50.0)
+        if label_id > 0:  # Skip O and padding
+            # sqrt dampens extreme weights for rare classes
+            freq_weight = min((total / (count * num_labels)) ** 0.5, 10.0)
+            weights[label_id] = freq_weight * entity_boost
     
-    # Give extra weight to non-O classes (multiply by 10)
-    for i in range(1, num_labels):
-        weights[i] *= 10.0
+    # Slight boost for B- tags (beginning of entity) vs I- tags
+    # B- tags are more important for entity detection
+    from src.labels_crc_triage import ID2LABEL
+    for label_id in range(1, num_labels):
+        if ID2LABEL.get(label_id, "").startswith("B-"):
+            weights[label_id] *= 1.2  # 20% boost for B- tags
     
-    print(f"Class weights: O={weights[0]:.2f}, avg non-O={weights[1:].mean():.2f}")
+    # Normalize so mean weight = 1 (prevents loss scale issues)
+    weights = weights / weights.mean()
+    
+    print(f"  Class weights: O={weights[0]:.3f}, avg B-tags={weights[1::2].mean():.3f}, avg I-tags={weights[2::2].mean():.3f}")
     return weights
 
 
@@ -136,8 +167,8 @@ def train(
     print("=" * 50)
     print(f"Using {NUM_LABELS} labels from {labels_module_name}")
     
-    # Set up device
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    # Set up device - respect config override if specified
+    device = train_config.get("device", "cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
     
     # Load processor
@@ -155,6 +186,7 @@ def train(
         id2label=ID2LABEL,
         label2id=LABEL2ID
     )
+    model.to(device)
     
     # Load datasets
     print(f"\nLoading dataset from {data_config['dataset']}...")
@@ -163,15 +195,30 @@ def train(
     print(f"  Train examples: {len(dataset['train'])}")
     print(f"  Validation examples: {len(dataset['validation'])}")
     
-    # Data collator
+    # Data collator with optional augmentation
+    augment_images = train_config.get("augment_images", False)
+    augment_prob = train_config.get("augment_prob", 0.5)
+    print(f"\nImage augmentation: {'enabled' if augment_images else 'disabled'}")
+    
     data_collator = UDSDataCollator(
         processor=processor,
-        max_length=model_config["max_length"]
+        max_length=model_config["max_length"],
+        augment=augment_images,
+        augment_prob=augment_prob
     )
     
     # Output directory
     output_dir = Path(train_config["output_dir"])
     output_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Check for early stopping config
+    early_stopping_patience = train_config.get("early_stopping_patience", None)
+    load_best_model = train_config.get("load_best_model_at_end", False)
+    
+    # Gradient accumulation for effective larger batch sizes
+    gradient_accumulation_steps = train_config.get("gradient_accumulation_steps", 1)
+    effective_batch_size = train_config["batch_size"] * gradient_accumulation_steps
+    print(f"Gradient accumulation: {gradient_accumulation_steps} steps (effective batch size: {effective_batch_size})")
     
     # Training arguments
     training_args = TrainingArguments(
@@ -179,6 +226,7 @@ def train(
         num_train_epochs=train_config["epochs"],
         per_device_train_batch_size=train_config["batch_size"],
         per_device_eval_batch_size=train_config["batch_size"],
+        gradient_accumulation_steps=gradient_accumulation_steps,
         learning_rate=float(train_config["learning_rate"]),
         weight_decay=float(train_config["weight_decay"]),
         warmup_ratio=float(train_config["warmup_ratio"]),
@@ -186,18 +234,32 @@ def train(
         eval_strategy=train_config["eval_strategy"],
         save_strategy=train_config["save_strategy"],
         logging_steps=train_config["logging_steps"],
+        logging_dir=str(output_dir / "logs"),  # TensorBoard logs directory
         save_total_limit=3,
-        report_to="none",  # Disable wandb/tensorboard by default
+        report_to=train_config.get("report_to", "none"),  # TensorBoard/wandb/none
         dataloader_num_workers=0,  # Windows compatibility
         remove_unused_columns=False,  # Keep all columns for custom collator
+        no_cuda=(device == "cpu"),  # Force CPU mode if specified
+        load_best_model_at_end=load_best_model,
+        metric_for_best_model="f1" if load_best_model else None,
+        greater_is_better=True if load_best_model else None,
     )
     
     # Compute class weights to handle imbalance
     print("\nComputing class weights for imbalanced data...")
-    class_weights = compute_class_weights(dataset["train"], NUM_LABELS)
+    entity_boost = train_config.get("entity_boost", 5.0)
+    o_weight = train_config.get("o_weight", 1.0)
+    print(f"  Using entity_boost={entity_boost}, o_weight={o_weight}")
+    class_weights = compute_class_weights(dataset["train"], NUM_LABELS, entity_boost=entity_boost, o_weight=o_weight)
     
     # Create compute_metrics with our labels
     compute_metrics = make_compute_metrics(ID2LABEL)
+    
+    # Set up callbacks
+    callbacks = []
+    if early_stopping_patience:
+        print(f"Early stopping enabled: patience={early_stopping_patience} epochs")
+        callbacks.append(EarlyStoppingCallback(early_stopping_patience=early_stopping_patience))
     
     # Trainer with weighted loss
     trainer = WeightedTrainer(
@@ -208,6 +270,7 @@ def train(
         eval_dataset=dataset["validation"],
         data_collator=data_collator,
         compute_metrics=compute_metrics,
+        callbacks=callbacks if callbacks else None,
     )
     
     # Train

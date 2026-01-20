@@ -1,5 +1,6 @@
 # CRC Triage Model Configuration
 # Focused on: Document type (colonoscopy/FIT/FOBT), dates, and results
+# Updated with ClinicalLayoutLM improvements
 
 model:
   base_model: "microsoft/layoutlmv3-base"
@@ -7,15 +8,25 @@ model:
 
 training:
   output_dir: "./models/crc_triage"
-  epochs: 15
+  epochs: 30
   batch_size: 2
-  learning_rate: 0.00005
+  gradient_accumulation_steps: 4  # Effective batch size = 2 * 4 = 8
+  learning_rate: 0.00003  # Reduced for finer convergence
   weight_decay: 0.01
   warmup_ratio: 0.1
   fp16: false
   eval_strategy: "epoch"
   save_strategy: "epoch"
   logging_steps: 10
+  device: "cpu"  # Force CPU due to GPU incompatibility
+  report_to: "tensorboard"  # Enable TensorBoard logging
+  early_stopping_patience: 5  # Stop if no improvement for 5 epochs
+  load_best_model_at_end: true  # Load best checkpoint at end
+  entity_boost: 5.0  # Weight multiplier for entity classes (lower = better precision)
+  o_weight: 1.0  # Weight for O class (higher = better precision, lower = better recall)
+  # Image augmentation (from ClinicalLayoutLM)
+  augment_images: true  # Enable brightness/contrast/rotation augmentation
+  augment_prob: 0.3  # Probability of augmentation per image
 
 data:
   dataset: "./data/dataset_crc_triage"

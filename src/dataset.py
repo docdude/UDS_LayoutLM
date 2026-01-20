@@ -198,18 +198,71 @@ def load_dataset(dataset_dir: str) -> DatasetDict:
     return load_from_disk(dataset_dir)
 
 
+# ImageNet normalization constants (used by LayoutLMv3)
+IMAGENET_MEAN = (0.485, 0.456, 0.406)
+IMAGENET_STD = (0.229, 0.224, 0.225)
+
+
 class UDSDataCollator:
-    """Custom data collator for LayoutLMv3 token classification."""
+    """
+    Custom data collator for LayoutLMv3 token classification.
     
-    def __init__(self, processor, max_length: int = 512):
+    Improvements from ClinicalLayoutLM:
+    - Optional image augmentation during training
+    - Explicit ImageNet normalization
+    """
+    
+    def __init__(
+        self, 
+        processor, 
+        max_length: int = 512,
+        augment: bool = False,
+        augment_prob: float = 0.5
+    ):
         self.processor = processor
         self.max_length = max_length
+        self.augment = augment
+        self.augment_prob = augment_prob
+        
+        # Set up augmentation transforms if enabled
+        if self.augment:
+            try:
+                from torchvision import transforms
+                self.color_jitter = transforms.ColorJitter(
+                    brightness=0.2, 
+                    contrast=0.2, 
+                    saturation=0.1, 
+                    hue=0.05
+                )
+                self.random_rotation = transforms.RandomRotation(degrees=2)
+                print("  Image augmentation enabled (brightness, contrast, rotation)")
+            except ImportError:
+                print("  Warning: torchvision not available, augmentation disabled")
+                self.augment = False
+    
+    def _augment_image(self, image: PILImage.Image) -> PILImage.Image:
+        """Apply random augmentation to image."""
+        import random
+        
+        if random.random() < self.augment_prob:
+            # Apply color jitter
+            image = self.color_jitter(image)
+        
+        if random.random() < self.augment_prob * 0.5:  # Less frequent rotation
+            # Apply slight rotation
+            image = self.random_rotation(image)
+        
+        return image
     
     def __call__(self, features: List[Dict]) -> Dict:
         images = [f["image"] for f in features]
         words = [f["words"] for f in features]
         boxes = [f["boxes"] for f in features]
         labels = [f["labels"] for f in features]
+        
+        # Apply augmentation if enabled
+        if self.augment:
+            images = [self._augment_image(img) for img in images]
         
         # Process with LayoutLMv3Processor
         encoding = self.processor(

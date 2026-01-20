@@ -1,0 +1,26 @@
+{
+  "mrn": "1936610",
+  "numerator_met": true,
+  "confidence": 0.95,
+  "best_evidence": {
+    "type": "COLONOSCOPY",
+    "date": "2024-04-11",
+    "file": "1936610_colonoscopy.pdf"
+  },
+  "documents": [
+    {
+      "file": "1936610_colonoscopy.pdf",
+      "type": "COLONOSCOPY",
+      "date": "2024-04-11",
+      "confidence": 0.996,
+      "crc_relevant": true
+    },
+    {
+      "file": "1936610_mmg.pdf",
+      "type": "NON-CRC",
+      "date": null,
+      "confidence": null,
+      "crc_relevant": false
+    }
+  ]
+}

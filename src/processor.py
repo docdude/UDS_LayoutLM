@@ -74,7 +74,7 @@ class PDFProcessor:
         self.poppler_path = poppler_path or find_poppler_path()
         if self.poppler_path:
             print(f"Using Poppler from: {self.poppler_path}")
-        else:
+        elif os.name == 'nt':  # Only warn on Windows
             print("⚠️  Poppler path not found - PDF conversion may fail")
         
         # Set up Tesseract

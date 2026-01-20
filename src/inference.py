@@ -1,6 +1,7 @@
 """Inference module for UDS metrics extraction."""
 
 import os
+import importlib
 from pathlib import Path
 from typing import List, Dict, Optional, Union
 from dataclasses import dataclass, asdict
@@ -12,7 +13,18 @@ from PIL import Image
 from tqdm import tqdm
 
 from .processor import PDFProcessor, ProcessedPage
-from .labels import ID2LABEL, UDS_MEASURES
+
+
+# CRC Triage measure groupings
+CRC_TRIAGE_MEASURES = {
+    "colonoscopy": ["DOC_TYPE_COLONOSCOPY", "PROCEDURE_DATE", "INDICATION_SCREENING", "INDICATION_SURVEILLANCE", "INDICATION_DIAGNOSTIC"],
+    "fit_test": ["DOC_TYPE_FIT", "COLLECTION_DATE", "RESULT_NEGATIVE", "RESULT_POSITIVE", "RESULT_VALUE"],
+    "fobt_test": ["DOC_TYPE_FOBT", "COLLECTION_DATE", "RESULT_NEGATIVE", "RESULT_POSITIVE", "RESULT_VALUE"],
+    "sigmoidoscopy": ["DOC_TYPE_SIGMOIDOSCOPY", "PROCEDURE_DATE"],
+    "ct_colonography": ["DOC_TYPE_CT_COLONOGRAPHY", "PROCEDURE_DATE"],
+    "polyp_findings": ["POLYP_FINDING", "POLYP_LOCATION", "POLYP_SIZE", "POLYP_COUNT", "PATHOLOGY_DIAGNOSIS", "BIOPSY_TAKEN", "BIOPSY_RESULT"],
+    "other_findings": ["DIVERTICULA_FINDING", "HEMORRHOIDS_FINDING", "COMPLICATIONS"],
+}
 
 
 @dataclass
@@ -57,7 +69,8 @@ class UDSExtractor:
         self,
         model_path: str,
         device: Optional[str] = None,
-        confidence_threshold: float = 0.7
+        confidence_threshold: float = 0.7,
+        labels_module: str = "src.labels_crc_triage"
     ):
         """
         Initialize the extractor.
@@ -66,9 +79,15 @@ class UDSExtractor:
             model_path: Path to fine-tuned model
             device: Device to run inference on ("cuda" or "cpu")
             confidence_threshold: Minimum confidence for entity extraction
+            labels_module: Module containing ID2LABEL mapping (e.g., "src.labels_crc_triage")
         """
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.confidence_threshold = confidence_threshold
+        
+        # Load labels dynamically
+        labels = importlib.import_module(labels_module)
+        self.id2label = labels.ID2LABEL
+        self.uds_measures = getattr(labels, 'UDS_MEASURES', CRC_TRIAGE_MEASURES)
         
         print(f"Loading model from {model_path}...")
         self.processor = LayoutLMv3Processor.from_pretrained(
@@ -82,6 +101,7 @@ class UDSExtractor:
         
         self.pdf_processor = PDFProcessor()
         print(f"Model loaded. Using device: {self.device}")
+        print(f"Labels: {len(self.id2label)} classes from {labels_module}")
     
     def extract_from_pdf(self, pdf_path: str) -> ExtractionResult:
         """Extract all UDS entities from a PDF document."""
@@ -141,6 +161,11 @@ class UDSExtractor:
             max_length=512,
             return_offsets_mapping=False
         )
+        
+        # Get word_ids BEFORE converting to dict (which loses the method)
+        word_ids = encoding.word_ids(0)
+        
+        # Now move tensors to device
         encoding = {k: v.to(self.device) for k, v in encoding.items()}
         
         # Run inference
@@ -157,16 +182,16 @@ class UDSExtractor:
             predictions = [predictions]
             confidences = [confidences]
         
-        # Get word_ids mapping
-        word_ids = encoding.word_ids(0) if hasattr(encoding, 'word_ids') else None
-        
         # Extract entities using BIO tags
+        # Track last word_idx to handle subword tokens (multiple tokens per word)
         entities = []
         current_entity_type = None
         current_words = []
+        current_word_indices = set()  # Track which word indices we've added
         current_boxes = []
         current_raw_boxes = []
         current_confs = []
+        last_word_idx = None
         
         for idx, (pred, conf) in enumerate(zip(predictions, confidences)):
             # Get word index
@@ -179,9 +204,16 @@ class UDSExtractor:
                 if word_idx >= len(page.words):
                     continue
             
-            label = ID2LABEL.get(pred, "O")
+            label = self.id2label.get(pred, "O")
             
             if label.startswith("B-"):
+                entity_type = label[2:]
+                
+                # If same word and same entity type, skip (subword token)
+                if word_idx == last_word_idx and current_entity_type == entity_type:
+                    current_confs.append(conf)  # Accumulate confidence
+                    continue
+                
                 # Save previous entity if exists
                 if current_entity_type and current_words:
                     entity = self._create_entity(
@@ -196,20 +228,26 @@ class UDSExtractor:
                         entities.append(entity)
                 
                 # Start new entity
-                current_entity_type = label[2:]
+                current_entity_type = entity_type
                 current_words = [page.words[word_idx]]
+                current_word_indices = {word_idx}
                 current_boxes = [page.boxes[word_idx]]
                 current_raw_boxes = [page.raw_boxes[word_idx]] if page.raw_boxes else []
                 current_confs = [conf]
+                last_word_idx = word_idx
                 
             elif label.startswith("I-"):
                 entity_type = label[2:]
                 if current_entity_type == entity_type:
-                    current_words.append(page.words[word_idx])
-                    current_boxes.append(page.boxes[word_idx])
-                    if page.raw_boxes:
-                        current_raw_boxes.append(page.raw_boxes[word_idx])
+                    # Only add word if we haven't seen this word_idx yet
+                    if word_idx not in current_word_indices:
+                        current_words.append(page.words[word_idx])
+                        current_word_indices.add(word_idx)
+                        current_boxes.append(page.boxes[word_idx])
+                        if page.raw_boxes:
+                            current_raw_boxes.append(page.raw_boxes[word_idx])
                     current_confs.append(conf)
+                    last_word_idx = word_idx
             else:
                 # "O" label - save current entity if exists
                 if current_entity_type and current_words:
@@ -226,9 +264,11 @@ class UDSExtractor:
                 
                 current_entity_type = None
                 current_words = []
+                current_word_indices = set()
                 current_boxes = []
                 current_raw_boxes = []
                 current_confs = []
+                last_word_idx = None
         
         # Don't forget last entity
         if current_entity_type and current_words:
@@ -288,7 +328,7 @@ class UDSExtractor:
         """Group extracted entities by UDS measure type."""
         grouped = {}
         
-        for measure_name, entity_types in UDS_MEASURES.items():
+        for measure_name, entity_types in self.uds_measures.items():
             matching = [
                 e for e in entities 
                 if e.entity_type in entity_types
@@ -345,13 +385,17 @@ if __name__ == "__main__":
     parser.add_argument("input", help="Input PDF file or directory")
     parser.add_argument("--model", required=True, help="Path to trained model")
     parser.add_argument("--output", default="./extractions", help="Output directory")
-    parser.add_argument("--threshold", type=float, default=0.7, help="Confidence threshold")
+    parser.add_argument("--threshold", type=float, default=0.5, help="Confidence threshold")
+    parser.add_argument("--labels", default="src.labels_crc_triage", help="Labels module")
+    parser.add_argument("--device", default="cpu", choices=["cpu", "cuda"], help="Device for inference")
     
     args = parser.parse_args()
     
     extractor = UDSExtractor(
         model_path=args.model,
-        confidence_threshold=args.threshold
+        confidence_threshold=args.threshold,
+        labels_module=args.labels,
+        device=args.device
     )
     
     input_path = Path(args.input)
@@ -360,6 +404,14 @@ if __name__ == "__main__":
         print(f"\nExtracted {len(result.entities)} entities:")
         for entity in result.entities:
             print(f"  {entity.entity_type}: {entity.text} ({entity.confidence:.2f})")
+        
+        # Show UDS metrics grouping
+        if result.uds_metrics:
+            print(f"\nUDS Metrics Summary:")
+            for measure, ents in result.uds_metrics.items():
+                print(f"  {measure}:")
+                for e in ents:
+                    print(f"    - {e.entity_type}: {e.text}")
     else:
         results = extractor.batch_extract(str(input_path), args.output)
         print(f"\nProcessed {len(results)} documents")
