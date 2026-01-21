@@ -2,6 +2,7 @@
 
 import os
 import importlib
+import warnings
 from pathlib import Path
 from typing import List, Dict, Optional, Union
 from dataclasses import dataclass, asdict
@@ -11,6 +12,9 @@ import torch
 from transformers import LayoutLMv3ForTokenClassification, LayoutLMv3Processor
 from PIL import Image
 from tqdm import tqdm
+
+# Suppress deprecated device argument warning from transformers internal code
+warnings.filterwarnings("ignore", message=".*device.*argument is deprecated.*", category=FutureWarning)
 
 from .processor import PDFProcessor, ProcessedPage
 
@@ -95,8 +99,9 @@ class UDSExtractor:
             apply_ocr=False
         )
         self.model = LayoutLMv3ForTokenClassification.from_pretrained(
-            model_path
-        ).to(self.device)
+            model_path,
+            device_map=self.device  # Use device_map instead of .to(device)
+        )
         self.model.eval()
         
         self.pdf_processor = PDFProcessor()
