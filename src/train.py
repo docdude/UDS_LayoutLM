@@ -250,7 +250,7 @@ def train(
         logging_dir=str(output_dir / "logs"),  # TensorBoard logs directory
         save_total_limit=3,
         report_to=train_config.get("report_to", "none"),  # TensorBoard/wandb/none
-        dataloader_num_workers=0,  # Windows compatibility
+        dataloader_num_workers=train_config.get("dataloader_num_workers", 0),
         remove_unused_columns=False,  # Keep all columns for custom collator
         no_cuda=(device == "cpu"),  # Force CPU mode if specified
         load_best_model_at_end=load_best_model,
