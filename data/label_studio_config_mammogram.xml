@@ -1,0 +1,123 @@
+<View>
+  <Header value="Mammogram Triage - UDS Breast Cancer Screening"/>
+  <Image name="image" value="$image" zoom="true" zoomControl="true" rotateControl="true"/>
+  
+  <View style="padding: 10px; margin-top: 10px; background: #fff0f5; border-radius: 5px;">
+    <Header value="Instructions" size="5"/>
+    <Text name="instructions" value="Label atomic concepts: INDICATION (screening vs diagnostic), EXAM type, DATE, BI-RADS result, and LATERALITY. For UDS, SCREENING indication + BILATERAL coverage is required."/>
+  </View>
+  
+  <RectangleLabels name="label" toName="image">
+    
+    <!-- ============================================ -->
+    <!-- INDICATION (Critical for UDS) -->
+    <!-- ============================================ -->
+    <Header value="── Indication (Critical) ──"/>
+    <Label value="INDICATION_SCREENING" background="#2ca02c" hotkey="1"/>
+    <Label value="INDICATION_DIAGNOSTIC" background="#d62728" hotkey="2"/>
+    
+    <!-- ============================================ -->
+    <!-- EXAM TYPE -->
+    <!-- ============================================ -->
+    <Header value="── Exam Type ──"/>
+    <Label value="EXAM_MAMMOGRAM" background="#ff69b4" hotkey="3"/>
+    <Label value="EXAM_TOMOSYNTHESIS" background="#db7093" hotkey="4"/>
+    <Label value="EXAM_ULTRASOUND" background="#ff1493"/>
+    
+    <!-- ============================================ -->
+    <!-- KEY DATES (For measurement period) -->
+    <!-- ============================================ -->
+    <Header value="── Key Dates ──"/>
+    <Label value="EXAM_DATE" background="#1f77b4" hotkey="5"/>
+    <Label value="REPORT_DATE" background="#aec7e8"/>
+    
+    <!-- ============================================ -->
+    <!-- BI-RADS ASSESSMENT (Definitive Result) -->
+    <!-- ============================================ -->
+    <Header value="── BI-RADS Assessment ──"/>
+    <Label value="BIRADS_CATEGORY" background="#ff7f0e" hotkey="6"/>
+    
+    <!-- NOTE: RESULT_NEGATIVE, RESULT_BENIGN, RESULT_ABNORMAL removed -->
+    <!-- These caused false positives (e.g., 'suspicious' in 'no suspicious findings') -->
+    <!-- BI-RADS category provides the definitive result interpretation -->
+    
+    <!-- ============================================ -->
+    <!-- BREAST DENSITY -->
+    <!-- ============================================ -->
+    <Header value="── Breast Density ──"/>
+    <Label value="BREAST_DENSITY" background="#9467bd" hotkey="9"/>
+    
+    <!-- ============================================ -->
+    <!-- LATERALITY -->
+    <!-- ============================================ -->
+    <Header value="── Laterality ──"/>
+    <Label value="LATERALITY_BILATERAL" background="#17becf" hotkey="b"/>
+    <Label value="LATERALITY_LEFT" background="#bcbd22"/>
+    <Label value="LATERALITY_RIGHT" background="#e377c2"/>
+    
+    <!-- ============================================ -->
+    <!-- FOLLOW-UP -->
+    <!-- ============================================ -->
+    <Header value="── Follow-Up ──"/>
+    <Label value="FOLLOW_UP_INTERVAL" background="#8c564b"/>
+    
+    <!-- ============================================ -->
+    <!-- FINDINGS -->
+    <!-- ============================================ -->
+    <!-- NOTE: FINDING_MASS and FINDING_CALCIFICATION removed from auto-labeling -->
+    <!-- Simple regex matches 'masses' in 'no suspicious masses' - false positives -->
+    <!-- These labels remain for MANUAL annotation during review if needed -->
+    <Header value="── Findings (Manual Only) ──"/>
+    <Label value="FINDING_MASS" background="#c49c94" hotkey="m"/>
+    <Label value="FINDING_CALCIFICATION" background="#f7b6d2"/>
+    
+    <!-- ============================================ -->
+    <!-- CPT CODES -->
+    <!-- ============================================ -->
+    <Header value="── Clinical Codes ──"/>
+    <Label value="PROCEDURE_CPT" background="#c7c7c7"/>
+    
+  </RectangleLabels>
+  
+  <Rectangle name="bbox" toName="image" strokeWidth="2"/>
+  
+  <View style="margin-top: 20px; padding: 10px; background: #fff3cd; border-radius: 5px;">
+    <Header value="Document Classification" size="5"/>
+    <Choices name="doc_type" toName="image" choice="single" showInline="true" required="true">
+      <Choice value="screening_mammogram" hotkey="q"/>
+      <Choice value="diagnostic_mammogram" hotkey="w"/>
+      <Choice value="screening_with_tomosynthesis" hotkey="e"/>
+      <Choice value="breast_ultrasound"/>
+      <Choice value="breast_mri"/>
+      <Choice value="not_mammogram" hotkey="x"/>
+      <Choice value="other"/>
+    </Choices>
+  </View>
+  
+  <View style="margin-top: 10px; padding: 10px; background: #e8f4f8; border-radius: 5px;">
+    <Header value="BI-RADS Quick Select" size="5"/>
+    <Choices name="birads_quick" toName="image" choice="single" showInline="true">
+      <Choice value="BI-RADS 0 - Incomplete"/>
+      <Choice value="BI-RADS 1 - Negative"/>
+      <Choice value="BI-RADS 2 - Benign"/>
+      <Choice value="BI-RADS 3 - Probably Benign"/>
+      <Choice value="BI-RADS 4 - Suspicious"/>
+      <Choice value="BI-RADS 5 - Highly Suspicious"/>
+      <Choice value="BI-RADS 6 - Known Malignancy"/>
+    </Choices>
+  </View>
+  
+  <View style="margin-top: 10px; padding: 10px; background: #d4edda; border-radius: 5px;">
+    <Header value="UDS Numerator Status" size="5"/>
+    <Choices name="uds_status" toName="image" choice="single" showInline="true">
+      <Choice value="MEETS_NUMERATOR"/>
+      <Choice value="DOES_NOT_MEET"/>
+      <Choice value="NEEDS_REVIEW"/>
+    </Choices>
+  </View>
+  
+  <View style="margin-top: 10px;">
+    <Header value="Review Notes" size="5"/>
+    <TextArea name="notes" toName="image" placeholder="Note any issues: unclear date, diagnostic vs screening ambiguity, unilateral only..." rows="2" maxSubmissions="1"/>
+  </View>
+</View>

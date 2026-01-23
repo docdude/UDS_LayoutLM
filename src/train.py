@@ -51,13 +51,14 @@ class WeightedTrainer(Trainer):
         return (loss, outputs) if return_outputs else loss
 
 
-def compute_class_weights(dataset, num_labels: int, entity_boost: float = 5.0, o_weight: float = 1.0):
+def compute_class_weights(dataset, num_labels: int, id2label: dict, entity_boost: float = 5.0, o_weight: float = 1.0):
     """
     Compute balanced class weights for NER.
     
     Args:
         dataset: Training dataset
         num_labels: Number of label classes
+        id2label: Mapping of label IDs to label names
         entity_boost: Multiplier for entity classes vs O (default 5.0)
         o_weight: Base weight for O class (default 1.0)
     
@@ -94,9 +95,8 @@ def compute_class_weights(dataset, num_labels: int, entity_boost: float = 5.0, o
     
     # Slight boost for B- tags (beginning of entity) vs I- tags
     # B- tags are more important for entity detection
-    from src.labels_crc_triage import ID2LABEL
     for label_id in range(1, num_labels):
-        if ID2LABEL.get(label_id, "").startswith("B-"):
+        if id2label.get(label_id, "").startswith("B-"):
             weights[label_id] *= 1.2  # 20% boost for B- tags
     
     # Normalize so mean weight = 1 (prevents loss scale issues)
@@ -263,7 +263,7 @@ def train(
     entity_boost = train_config.get("entity_boost", 5.0)
     o_weight = train_config.get("o_weight", 1.0)
     print(f"  Using entity_boost={entity_boost}, o_weight={o_weight}")
-    class_weights = compute_class_weights(dataset["train"], NUM_LABELS, entity_boost=entity_boost, o_weight=o_weight)
+    class_weights = compute_class_weights(dataset["train"], NUM_LABELS, ID2LABEL, entity_boost=entity_boost, o_weight=o_weight)
     
     # Create compute_metrics with our labels
     compute_metrics = make_compute_metrics(ID2LABEL)
@@ -311,8 +311,9 @@ def train(
     processor.save_pretrained(str(final_model_path))
     
     # Evaluate on test set (using the best model)
+    # Use metric_key_prefix="test" so TensorBoard shows test/ instead of eval/
     print("\nEvaluating on test set...")
-    test_results = trainer.evaluate(dataset["test"])
+    test_results = trainer.evaluate(dataset["test"], metric_key_prefix="test")
     print(f"Test Results: {test_results}")
     
     # Save results with best model info

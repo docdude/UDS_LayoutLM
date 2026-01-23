@@ -30,6 +30,29 @@ CRC_TRIAGE_MEASURES = {
     "other_findings": ["DIVERTICULA_FINDING", "HEMORRHOIDS_FINDING", "COMPLICATIONS"],
 }
 
+# Mammogram triage entity types - used to determine if document is a mammogram report
+# Requires >= 2 different entity types to avoid FPs from documents that just mention "mammogram"
+MAMMOGRAM_TRIAGE_TYPES = {'EXAM_MAMMOGRAM', 'EXAM_TOMOSYNTHESIS', 'BIRADS_CATEGORY', 'BREAST_DENSITY'}
+
+
+def is_mammogram_report(entities: List['ExtractedEntity'], min_entity_types: int = 2) -> bool:
+    """
+    Determine if a document is a mammogram report based on extracted entities.
+    
+    Uses multi-entity rule: A true mammogram report should have at least 2 different
+    mammogram-related entity types (e.g., EXAM_MAMMOGRAM + BIRADS_CATEGORY).
+    This prevents false positives from documents that just mention "mammogram" in text.
+    
+    Args:
+        entities: List of extracted entities from the document
+        min_entity_types: Minimum number of different entity types required (default: 2)
+        
+    Returns:
+        True if document appears to be a mammogram report
+    """
+    mmg_entity_types = {e.entity_type for e in entities if e.entity_type in MAMMOGRAM_TRIAGE_TYPES}
+    return len(mmg_entity_types) >= min_entity_types
+
 
 @dataclass
 class ExtractedEntity:
@@ -99,9 +122,8 @@ class UDSExtractor:
             apply_ocr=False
         )
         self.model = LayoutLMv3ForTokenClassification.from_pretrained(
-            model_path,
-            device_map=self.device  # Use device_map instead of .to(device)
-        )
+            model_path
+        ).to(self.device)
         self.model.eval()
         
         self.pdf_processor = PDFProcessor()

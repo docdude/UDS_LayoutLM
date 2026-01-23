@@ -1,13 +1,13 @@
-# CRC Triage Model Configuration
-# Focused on: Document type (colonoscopy/FIT/FOBT), dates, and results
-# Updated with ClinicalLayoutLM improvements
+# Mammogram Triage Model Configuration
+# Focused on: Document type (screening/diagnostic), dates, BI-RADS, and breast density
+# Following same framework as CRC model with ClinicalLayoutLM improvements
 
 model:
   base_model: "microsoft/layoutlmv3-base"
   max_length: 512
 
 training:
-  output_dir: "./models/crc_triage_v2"  # With negatives + removed labels
+  output_dir: "./models/mmg_triage_v3"  # With augmentation
   epochs: 30
   batch_size: 8  # L4 has 24GB VRAM, can handle larger batches
   gradient_accumulation_steps: 1  # No need to accumulate on L4
@@ -19,19 +19,19 @@ training:
   eval_strategy: "epoch"
   save_strategy: "epoch"
   logging_steps: 10
-  device: "cpu"  # Use "cuda" for GPU, "cpu" for CPU
+  device: "cpu"  # Use "cuda" for GPU, "cpu" for CPU (Quadro P620 sm_61 not compatible)
   dataloader_num_workers: 4  # Parallel data loading (Linux only, use 0 on Windows)
   report_to: "tensorboard"  # Enable TensorBoard logging
   early_stopping_patience: 5  # Stop if no improvement for 5 epochs
   load_best_model_at_end: true  # Load best checkpoint at end
   entity_boost: 5.0  # Weight multiplier for entity classes (lower = better precision)
   o_weight: 1.0  # Weight for O class (higher = better precision, lower = better recall)
-  # Image augmentation - DISABLED (hurts performance per MMG experiments)
-  augment_images: false
-  augment_prob: 0.3
+  # Image augmentation (from ClinicalLayoutLM)
+  augment_images: true  # Enable brightness/contrast/rotation augmentation
+  augment_prob: 0.3  # Probability of augmentation per image
 
 data:
-  dataset: "./data/dataset_crc_triage_v3"  # With negatives + remapped labels
+  dataset: "./data/dataset_mmg_triage_v2"
 
 labels:
-  module: "src.labels_crc_triage"
+  module: "src.labels_mammogram"
