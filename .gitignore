@@ -98,3 +98,7 @@ coverage.xml
 *.cover
 .hypothesis/
 .pytest_cache/
+data/dataset_crc_triage_v4_merged/
+data/dataset_crc_triage_v4/
+data/dataset_crc_triage_v3/
+data/dataset_crc_triage_v2/

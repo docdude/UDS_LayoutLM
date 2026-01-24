@@ -170,8 +170,8 @@ def create_dataset_splits(examples, train_ratio=0.7, val_ratio=0.15):
 
 def main():
     export_path = "data/labeled/project-3-at-2026-01-19-05-04-f8094adf.json"
-    images_dir = "data/processed"
-    output_dir = "data/dataset_crc_triage"
+    images_dir = "data/processed/crc_triage"
+    output_dir = "data/dataset_crc_triage_v4"
     
     print("=" * 50)
     print("Creating CRC Triage Training Dataset")

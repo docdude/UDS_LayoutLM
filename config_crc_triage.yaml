@@ -7,7 +7,7 @@ model:
   max_length: 512
 
 training:
-  output_dir: "./models/crc_triage_v2"  # With negatives + removed labels
+  output_dir: "./models/crc_triage_v3"  # v3: Fixed FOBT labels with OCR text
   epochs: 30
   batch_size: 8  # L4 has 24GB VRAM, can handle larger batches
   gradient_accumulation_steps: 1  # No need to accumulate on L4
@@ -31,7 +31,7 @@ training:
   augment_prob: 0.3
 
 data:
-  dataset: "./data/dataset_crc_triage_v3"  # With negatives + remapped labels
+  dataset: "./data/dataset_crc_triage_v4_merged"  # v4: Fixed FOBT labels + negatives
 
 labels:
   module: "src.labels_crc_triage"
