@@ -1,26 +1,95 @@
-"""PDF processing and OCR utilities."""
+"""PDF processing and OCR utilities.
+
+Supports multiple OCR backends:
+- PaddleOCR (default, recommended) - Better accuracy for medical documents
+- Tesseract (legacy fallback)
+"""
 
 import os
 from pathlib import Path
-from typing import List, Dict, Tuple, Optional
+from typing import List, Dict, Tuple, Optional, Literal
 from dataclasses import dataclass
 import json
+import warnings
 
 from pdf2image import convert_from_path
 from PIL import Image
-import pytesseract
+import numpy as np
+
+# OCR Backend selection
+OCR_BACKEND: Literal["paddleocr", "tesseract"] = os.environ.get("OCR_BACKEND", "paddleocr").lower()
+
+# Lazy imports for OCR backends
+_paddleocr_instance = None
+_tesseract_configured = False
 
 
-# Configure Tesseract path for Windows
-TESSERACT_PATH = r"C:\Users\jloya\AppData\Local\Programs\Tesseract-OCR\tesseract.exe"
-if os.path.exists(TESSERACT_PATH):
-    pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH
+def _get_paddleocr(use_gpu: bool = True, lang: str = "en"):
+    """Lazy-load PaddleOCR instance (singleton for efficiency)."""
+    global _paddleocr_instance
+    if _paddleocr_instance is None:
+        try:
+            from paddleocr import PaddleOCR
+            _paddleocr_instance = PaddleOCR(
+                use_angle_cls=True,
+                lang=lang,
+                use_gpu=use_gpu,
+                show_log=False
+            )
+            gpu_status = "GPU" if use_gpu else "CPU"
+            print(f"✅ PaddleOCR initialized ({gpu_status}, lang={lang})")
+        except ImportError:
+            raise ImportError(
+                "PaddleOCR not installed. Install with:\n"
+                "  pip install paddlepaddle-gpu==3.2.0 paddleocr==2.7.0.3\n"
+                "Or for CPU only:\n"
+                "  pip install paddlepaddle==3.2.0 paddleocr==2.7.0.3"
+            )
+    return _paddleocr_instance
 
-# Poppler path for Windows
-POPPLER_PATH = r"C:\poppler\Library\bin"
-if not os.path.exists(POPPLER_PATH):
-    # Try alternate structure
-    POPPLER_PATH = r"C:\poppler\bin"
+
+def _configure_tesseract(tesseract_path: Optional[str] = None):
+    """Configure Tesseract (legacy fallback)."""
+    global _tesseract_configured
+    if _tesseract_configured:
+        return
+    
+    import pytesseract
+    
+    # Windows paths
+    TESSERACT_PATH = r"C:\Users\jloya\AppData\Local\Programs\Tesseract-OCR\tesseract.exe"
+    
+    if tesseract_path and os.path.exists(tesseract_path):
+        pytesseract.pytesseract.tesseract_cmd = tesseract_path
+        print(f"Using Tesseract from: {tesseract_path}")
+    elif os.path.exists(TESSERACT_PATH):
+        pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH
+        print(f"Using Tesseract from: {TESSERACT_PATH}")
+    
+    _tesseract_configured = True
+
+
+def find_poppler_path() -> Optional[str]:
+    """Find Poppler installation on Windows."""
+    if os.name != 'nt':  # Not Windows
+        return None
+    
+    # Check common installation paths
+    common_paths = [
+        r"C:\poppler\Library\bin",
+        r"C:\poppler\bin",
+        r"C:\Program Files\poppler\Library\bin",
+        r"C:\Program Files\poppler\bin",
+        r"C:\Program Files (x86)\poppler\Library\bin",
+        r"C:\tools\poppler\Library\bin",
+    ]
+    
+    for path in common_paths:
+        pdftoppm = os.path.join(path, "pdftoppm.exe")
+        if os.path.exists(pdftoppm):
+            return path
+    
+    return None
 
 
 @dataclass
@@ -58,17 +127,37 @@ def find_poppler_path() -> Optional[str]:
 
 
 class PDFProcessor:
-    """Process PDFs for LayoutLMv3."""
+    """Process PDFs for LayoutLMv3.
+    
+    Supports multiple OCR backends:
+    - paddleocr (default): Better accuracy, especially for medical terms like iFOBT
+    - tesseract: Legacy fallback
+    
+    Args:
+        dpi: Resolution for PDF to image conversion (default: 300)
+        confidence_threshold: Minimum OCR confidence 0-100 (default: 30)
+        poppler_path: Path to Poppler binaries (Windows only)
+        ocr_backend: "paddleocr" or "tesseract" (default from OCR_BACKEND env var)
+        use_gpu: Use GPU for PaddleOCR (default: True)
+        lang: OCR language (default: "en")
+    """
     
     def __init__(
         self, 
         dpi: int = 300, 
         confidence_threshold: int = 30,
         poppler_path: Optional[str] = None,
-        tesseract_path: Optional[str] = None
+        ocr_backend: Optional[str] = None,
+        use_gpu: bool = True,
+        lang: str = "en",
+        tesseract_path: Optional[str] = None  # Legacy parameter
     ):
         self.dpi = dpi
-        self.confidence_threshold = confidence_threshold
+        self.confidence_threshold = confidence_threshold / 100.0  # Normalize to 0-1 for PaddleOCR
+        self.confidence_threshold_pct = confidence_threshold  # Keep original for tesseract
+        self.ocr_backend = ocr_backend or OCR_BACKEND
+        self.use_gpu = use_gpu
+        self.lang = lang
         
         # Set up Poppler
         self.poppler_path = poppler_path or find_poppler_path()
@@ -77,13 +166,16 @@ class PDFProcessor:
         elif os.name == 'nt':  # Only warn on Windows
             print("⚠️  Poppler path not found - PDF conversion may fail")
         
-        # Set up Tesseract
-        if tesseract_path and os.path.exists(tesseract_path):
-            pytesseract.pytesseract.tesseract_cmd = tesseract_path
-            print(f"Using Tesseract from: {tesseract_path}")
-        elif os.path.exists(TESSERACT_PATH):
-            pytesseract.pytesseract.tesseract_cmd = TESSERACT_PATH
-            print(f"Using Tesseract from: {TESSERACT_PATH}")
+        # Initialize OCR backend
+        if self.ocr_backend == "paddleocr":
+            self._ocr = _get_paddleocr(use_gpu=use_gpu, lang=lang)
+        elif self.ocr_backend == "tesseract":
+            _configure_tesseract(tesseract_path)
+            import pytesseract
+            self._pytesseract = pytesseract
+            print(f"Using Tesseract OCR backend")
+        else:
+            raise ValueError(f"Unknown OCR backend: {self.ocr_backend}. Use 'paddleocr' or 'tesseract'")
     
     def process_pdf(self, pdf_path: str) -> List[ProcessedPage]:
         """Process all pages of a PDF."""
@@ -137,15 +229,85 @@ class PDFProcessor:
     def _ocr_with_boxes(
         self, image: Image.Image
     ) -> Tuple[List[str], List[List[int]], List[List[int]]]:
-        """Extract text with normalized bounding boxes."""
+        """Extract text with normalized bounding boxes.
+        
+        Returns:
+            words: List of extracted words
+            boxes: Normalized bounding boxes (0-1000 scale for LayoutLMv3)
+            raw_boxes: Original pixel coordinates [x1, y1, x2, y2]
+        """
+        if self.ocr_backend == "paddleocr":
+            return self._ocr_paddleocr(image)
+        else:
+            return self._ocr_tesseract(image)
+    
+    def _ocr_paddleocr(
+        self, image: Image.Image
+    ) -> Tuple[List[str], List[List[int]], List[List[int]]]:
+        """OCR using PaddleOCR backend."""
+        width, height = image.size
+        words, boxes, raw_boxes = [], [], []
+        
+        # Convert PIL Image to numpy array
+        img_array = np.array(image)
+        
         try:
-            ocr_data = pytesseract.image_to_data(
-                image, output_type=pytesseract.Output.DICT
+            results = self._ocr.ocr(img_array, cls=True)
+        except Exception as e:
+            raise RuntimeError(f"PaddleOCR failed: {e}") from e
+        
+        if not results or not results[0]:
+            return words, boxes, raw_boxes
+        
+        for line in results[0]:
+            # PaddleOCR format: [box_points, (text, confidence)]
+            # box_points: [[x1,y1], [x2,y2], [x3,y3], [x4,y4]] - 4 corners
+            box_points, (text, conf) = line
+            
+            # Filter by confidence
+            if conf < self.confidence_threshold:
+                continue
+            
+            text = text.strip()
+            if not text:
+                continue
+            
+            # Convert 4-point box to rectangular [x1, y1, x2, y2]
+            xs = [p[0] for p in box_points]
+            ys = [p[1] for p in box_points]
+            x1, x2 = min(xs), max(xs)
+            y1, y2 = min(ys), max(ys)
+            
+            # Raw pixel coordinates
+            raw_box = [int(x1), int(y1), int(x2), int(y2)]
+            raw_boxes.append(raw_box)
+            
+            # Normalized to 0-1000 (LayoutLMv3 format)
+            norm_box = [
+                int(1000 * x1 / width),
+                int(1000 * y1 / height),
+                int(1000 * x2 / width),
+                int(1000 * y2 / height)
+            ]
+            # Clamp values
+            norm_box = [max(0, min(1000, v)) for v in norm_box]
+            
+            words.append(text)
+            boxes.append(norm_box)
+        
+        return words, boxes, raw_boxes
+    
+    def _ocr_tesseract(
+        self, image: Image.Image
+    ) -> Tuple[List[str], List[List[int]], List[List[int]]]:
+        """OCR using Tesseract backend (legacy)."""
+        try:
+            ocr_data = self._pytesseract.image_to_data(
+                image, output_type=self._pytesseract.Output.DICT
             )
         except Exception as e:
             raise RuntimeError(
-                f"OCR failed: {e}\n"
-                f"Tesseract cmd: {pytesseract.pytesseract.tesseract_cmd}\n"
+                f"Tesseract OCR failed: {e}\n"
                 "Make sure Tesseract is installed correctly."
             ) from e
         
@@ -163,7 +325,7 @@ class PDFProcessor:
                 except ValueError:
                     conf = 0
             
-            if text and conf >= self.confidence_threshold:
+            if text and conf >= self.confidence_threshold_pct:
                 left = ocr_data["left"][i]
                 top = ocr_data["top"][i]
                 w = ocr_data["width"][i]

@@ -5,9 +5,18 @@ datasets>=2.14.0
 
 # Document Processing
 pdf2image>=1.16.0
-pytesseract>=0.3.10
 Pillow>=10.0.0
 PyMuPDF>=1.23.0
+numpy>=1.24.0,<2.0.0  # PaddleOCR requires numpy 1.x
+
+# OCR - PaddleOCR (recommended, better accuracy for medical terms)
+# For GPU: pip install paddlepaddle-gpu==3.2.0 -i https://www.paddlepaddle.org.cn/packages/stable/cu118/
+paddlepaddle==3.2.0
+paddleocr==2.7.0.3
+opencv-python-headless>=4.8.0
+
+# OCR - Tesseract (legacy fallback, set OCR_BACKEND=tesseract to use)
+pytesseract>=0.3.10
 
 # Metrics & Evaluation
 seqeval>=1.2.2
