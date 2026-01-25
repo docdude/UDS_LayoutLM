@@ -1,0 +1,95 @@
+<!-- ============================================================================
+     Label Studio Configuration for PAP/Cervical Cancer Triage
+     UDS Cervical Cancer Screening Numerator
+     
+     FOCUS: Identify cervical screening documents and extract key info
+     - Document Type (Pap, HPV)
+     - Collection Date
+     - Bethesda Results (NILM, ASC-US, LSIL, HSIL, etc.)
+     - HPV Results
+     - CPT Codes
+     
+     REMOVED from auto-labeling (cross-contamination risk):
+     - SPECIMEN_ADEQUATE/INADEQUATE: generic terms
+     - INDICATION_*: "screening", "routine" appear in many docs
+     - DOC_TYPE_GYN_EXAM: doesn't confirm Pap was done
+     ============================================================================ -->
+<View>
+  <Header value="PAP/Cervical Cancer Screening Triage"/>
+  
+  <!-- Document Image -->
+  <Image name="image" value="$image" zoom="true" zoomControl="true" rotateControl="true"/>
+  
+  <!-- Instructions -->
+  <View style="padding: 10px; margin-top: 10px; background: #f0f7ff; border-radius: 5px;">
+    <Header value="Instructions" size="5"/>
+    <Text name="instructions" value="Label key elements to determine: Is this a cervical screening? When was it done? What was the result?"/>
+  </View>
+  
+  <!-- Labels for Rectangle Annotations -->
+  <RectangleLabels name="label" toName="image">
+    
+    <!-- ============================================ -->
+    <!-- DOCUMENT TYPE - Auto-labeled -->
+    <!-- ============================================ -->
+    <Label value="DOC_TYPE_PAP" background="#1f77b4" hotkey="1"/>
+    <Label value="DOC_TYPE_HPV" background="#17becf" hotkey="2"/>
+    
+    <!-- ============================================ -->
+    <!-- DATE - Auto-labeled -->
+    <!-- ============================================ -->
+    <Label value="COLLECTION_DATE" background="#2ca02c" hotkey="3"/>
+    
+    <!-- ============================================ -->
+    <!-- SPECIMEN - Auto-labeled -->
+    <!-- ============================================ -->
+    <Label value="SPECIMEN_ADEQUATE" background="#3498db"/>
+    <Label value="SPECIMEN_INADEQUATE" background="#e74c3c"/>
+    <Label value="SPECIMEN_TYPE" background="#5dade2"/>
+    
+    <!-- ============================================ -->
+    <!-- PAP RESULTS - Bethesda System (Auto-labeled) -->
+    <!-- These terms are cervical-specific, low cross-contamination risk -->
+    <!-- ============================================ -->
+    <Label value="RESULT_NILM" background="#2ecc71" hotkey="4"/>
+    <Label value="RESULT_ASCUS" background="#f39c12" hotkey="5"/>
+    <Label value="RESULT_ASCH" background="#e67e22"/>
+    <Label value="RESULT_LSIL" background="#e74c3c" hotkey="6"/>
+    <Label value="RESULT_HSIL" background="#c0392b" hotkey="7"/>
+    <Label value="RESULT_AGC" background="#9b59b6"/>
+    
+    <!-- ============================================ -->
+    <!-- HPV RESULTS - Auto-labeled -->
+    <!-- ============================================ -->
+    <Label value="HPV_NEGATIVE" background="#1abc9c" hotkey="8"/>
+    <Label value="HPV_POSITIVE" background="#d35400" hotkey="9"/>
+    <Label value="HPV_GENOTYPE" background="#e74c3c"/>
+    
+    <!-- ============================================ -->
+    <!-- PROCEDURE CODES - Auto-labeled -->
+    <!-- ============================================ -->
+    <Label value="PROCEDURE_CPT" background="#8d6e63" hotkey="0"/>
+    
+  </RectangleLabels>
+  
+  <!-- Document Classification -->
+  <View style="margin-top: 20px; padding: 10px; background: #fff3cd; border-radius: 5px;">
+    <Header value="Document Classification" size="5"/>
+    <Choices name="doc_type" toName="image" choice="single" showInline="true">
+      <Choice value="pap_result"/>
+      <Choice value="hpv_result"/>
+      <Choice value="pap_hpv_cotest"/>
+      <Choice value="cervical_mention_in_note"/>
+      <Choice value="not_cervical_screening"/>
+    </Choices>
+  </View>
+  
+  <!-- Notes -->
+  <View style="margin-top: 10px;">
+    <Header value="Notes" size="5"/>
+    <TextArea name="notes" toName="image" 
+              placeholder="Notes about document quality or special observations..."
+              rows="2" maxSubmissions="1"/>
+  </View>
+  
+</View>
